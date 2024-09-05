@@ -12,37 +12,34 @@ const WIKI_URL_REGIONS = [
   'https://en.wikipedia.org/wiki/Mobile_Network_Codes_in_ITU_region_4xx_(Asia)',
   'https://en.wikipedia.org/wiki/Mobile_Network_Codes_in_ITU_region_5xx_(Oceania)',
   'https://en.wikipedia.org/wiki/Mobile_Network_Codes_in_ITU_region_6xx_(Africa)',
-  'https://en.wikipedia.org/wiki/Mobile_Network_Codes_in_ITU_region_7xx_(South_America)'
+  'https://en.wikipedia.org/wiki/Mobile_Network_Codes_in_ITU_region_7xx_(South_America)',
 ];
 
-const MCC_MNC_OUTPUT_FILE = path.join( __dirname, 'mcc-mnc-list.json');
-const STATUS_CODES_OUTPUT_FILE = path.join( __dirname, 'status-codes.json');
-
+const MCC_MNC_OUTPUT_FILE = path.join(__dirname, 'mcc-mnc-list.json');
+const STATUS_CODES_OUTPUT_FILE = path.join(__dirname, 'status-codes.json');
 
 function fetch() {
   let records = [];
   let statusCodes = [];
 
-  const process = (region, records, statusCodes) => new Promise(resolve => collect (resolve, region, records, statusCodes));
+  const process = (region, records, statusCodes) => new Promise((resolve) => collect(resolve, region, records, statusCodes));
 
   (async function loop() {
-    
     for (let i = 0; i < WIKI_URL_REGIONS.length; i++) {
       const region = WIKI_URL_REGIONS[i];
       await process(region, records, statusCodes);
       console.log(region, records.length, statusCodes.length);
     }
-    
+
     await process(WIKI_URL, records, statusCodes, true);
     console.log(WIKI_URL, records.length, statusCodes.length);
 
     writeData(records, statusCodes);
   })();
-  
 }
 
-function collect (resolve, from, records, statusCodes, globals) {
-  JSDOM.fromURL(from).then(dom => {
+function collect(resolve, from, records, statusCodes, globals) {
+  JSDOM.fromURL(from).then((dom) => {
     const { window } = dom;
     var content = window.document.querySelector('#mw-content-text > .mw-parser-output');
 
@@ -54,7 +51,10 @@ function collect (resolve, from, records, statusCodes, globals) {
     content = removeCiteReferences(content);
 
     const children = content.childNodes;
-    let recordType, sectionName, countryName = null, countryCode = null;
+    let recordType,
+      sectionName,
+      countryName = null,
+      countryCode = null;
 
     nodeList: for (let i = 0; i < children.length; i++) {
       let node = children[i];
@@ -64,42 +64,58 @@ function collect (resolve, from, records, statusCodes, globals) {
         continue;
       }
 
-      if (node.nodeName === 'H2') {
-        recordType = 'other';
-        sectionName = node.querySelector('.mw-headline').textContent.trim();
+      // Wikpiedia used to stor National/International in an H2 tag, but now stores them inside a DIV of type 'mw-heading mw-heading2'
+      // Therefore we look in divs of that type, then look further inside for the H2 element
+      if (node.nodeName === 'DIV' && node.classList.value === 'mw-heading mw-heading2') {
+        if (node.hasChildNodes()) {
+          for (let j = 0; j < node.childNodes.length; j++) {
+            let node2 = node.childNodes[j];
+            if (node2.nodeName === 'H2') {
+              recordType = 'other';
+              sectionName = node2.textContent.trim();
 
-        if (sectionName === 'See also' || sectionName === 'External links' || sectionName === 'National MNC Authorities') {
-          break nodeList;
+              if (sectionName === 'See also' || sectionName === 'External links' || sectionName === 'National MNC Authorities') {
+                break nodeList;
+              }
+
+              if (sectionName === 'National operators') {
+                recordType = 'National';
+              }
+
+              if (sectionName.length === 1) {
+                continue;
+              }
+
+              if (sectionName === 'Test networks') {
+                recordType = 'Test';
+              }
+
+              if (sectionName === 'International operators') {
+                recordType = 'International';
+              }
+
+              if (recordType === 'other') {
+                //  console.log('WARN recordType is other', node.textContent);
+              }
+            }
+          }
         }
-
-        if (sectionName === 'National operators') {
-          recordType = 'National';
-        }
-
-        if (sectionName.length === 1) {
-          continue;
-        }
-
-        if (sectionName === 'Test networks') {
-          recordType = 'Test';
-        }
-
-        if (sectionName === 'International operators') {
-          recordType = 'International';
-        }
-
-        if (recordType === 'other') {
-        //  console.log('WARN recordType is other', node.textContent);
-        }
-
       }
 
-      
-      if (node.nodeName === 'H4') {
-        let countryText = node.querySelector('.mw-headline').textContent.trim();
-        let dashPos = countryText.indexOf('–');
-        countryName = countryText.substr(0, dashPos - 1);
-        countryCode = countryText.substr(dashPos + 2);
+      // Wikipedia used to store the country code in an H4 tag, but now stores in in an H4 inside a DIV of type "mw-heading mw-heading4".
+      // Therefore we look in divs of that type, then look further inside for the H4 element
+      if (node.nodeName === 'DIV' && node.classList.value === 'mw-heading mw-heading4') {
+        if (node.hasChildNodes()) {
+          for (let j = 0; j < node.childNodes.length; j++) {
+            let node2 = node.childNodes[j];
+            if (node2.nodeName === 'H4') {
+              let countryText = node2.textContent.trim();
+              let dashPos = countryText.indexOf('–');
+              countryName = countryText.substr(0, dashPos - 1);
+              countryCode = countryText.substr(dashPos + 2);
+            }
+          }
+        }
       }
 
       if (node.nodeName === 'TABLE') {
@@ -113,7 +129,7 @@ function collect (resolve, from, records, statusCodes, globals) {
           let cols = rows[j].querySelectorAll('td');
 
           if (cols.length < 7) {
-        //    console.log('WARN invalid table row:', rows[j], node.textContent);
+            //    console.log('WARN invalid table row:', rows[j], node.textContent);
             continue;
           }
 
@@ -138,8 +154,8 @@ function collect (resolve, from, records, statusCodes, globals) {
             status = 'Operational';
           }
 
-          if ( status && statusCodes.indexOf( status ) === -1 ) {
-            statusCodes.push( status );
+          if (status && statusCodes.indexOf(status) === -1) {
+            statusCodes.push(status);
           }
 
           records.push({
@@ -152,35 +168,32 @@ function collect (resolve, from, records, statusCodes, globals) {
             operator: cleanup(cols[3].textContent),
             status: status,
             bands: cleanup(cols[5].textContent),
-            notes: cleanup(cols[6].textContent)
-          })
-
+            notes: cleanup(cols[6].textContent),
+          });
         }
       }
-
     }
 
     resolve();
-
   });
 }
 
 function writeData(records, statusCodes) {
-  fs.writeFile( MCC_MNC_OUTPUT_FILE, JSON.stringify( records, null, 2 ), err => {
-    if ( err ) {
+  fs.writeFile(MCC_MNC_OUTPUT_FILE, JSON.stringify(records, null, 2), (err) => {
+    if (err) {
       throw err;
     }
-    console.log( 'MCC-MNC list saved to ' + MCC_MNC_OUTPUT_FILE );
-    console.log( 'Total ' + records.length + ' records' );
+    console.log('MCC-MNC list saved to ' + MCC_MNC_OUTPUT_FILE);
+    console.log('Total ' + records.length + ' records');
   });
 
   statusCodes.sort();
 
-  fs.writeFile( STATUS_CODES_OUTPUT_FILE, JSON.stringify( statusCodes, null, 2 ), err => {
-    if ( err ) {
+  fs.writeFile(STATUS_CODES_OUTPUT_FILE, JSON.stringify(statusCodes, null, 2), (err) => {
+    if (err) {
       throw err;
     }
-    console.log( 'Status codes saved to ' + STATUS_CODES_OUTPUT_FILE );
+    console.log('Status codes saved to ' + STATUS_CODES_OUTPUT_FILE);
   });
 }
 
